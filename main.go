@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"logging-challenge/middlewares"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -29,6 +31,29 @@ func main() {
 
 	// start: set up any of your logger configuration here if necessary
 
+	// Set middleware
+	r.Use(middlewares.Logging)
+
+	// handle log level by environment variable
+	if os.Getenv("LOG_LEVEL") == "debug" {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	} else {
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	// open log file
+	lf, err := os.OpenFile(
+		"logs/app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666,
+	)
+	if err != nil {
+		log.Fatal().Err(err).Msg("unable to open log file")
+	}
+	defer lf.Close()
+
+	// Set multiwriters for stdout and log file
+	multiWriters := zerolog.MultiLevelWriter(os.Stdout, lf)
+
+	log.Logger = zerolog.New(multiWriters).With().Timestamp().Logger()
 	// end: set up any of your logger configuration here
 
 	server := &http.Server{
@@ -50,16 +75,28 @@ func main() {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// creating a new context from the logger instance
+	log := log.Ctx(ctx).With().Str("func", "handler").Logger()
+	log.Debug().Msg("processing request")
+
 	name := r.URL.Query().Get("name")
+
 	res, err := greeting(ctx, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Info().Str("response", res).Msg("request processed")
+
 	w.Write([]byte(res))
 }
 
 func greeting(ctx context.Context, name string) (string, error) {
+	log := log.Ctx(ctx)
+	log.Debug().Str("func", "greeting").Str("name", name).Msg("processing greeting")
+
 	if len(name) < 5 {
 		return fmt.Sprintf("Hello %s! Your name is to short\n", name), nil
 	}
